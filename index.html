@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fixed Asset Roll-Forward (Practice)</title>
+<style>
+  :root { --ink:#1f2933; --muted:#667085; --line:#e4e7ec; --bg:#f7f8fa;
+          --card:#fff; --add:#2f6fed; --disp:#e5784a; --ok:#1a7f4b; --bad:#c0392b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+         background:var(--bg); color:var(--ink); }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:20px; }
+  .bar { display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+  select, input[type=file] { font-size:14px; padding:6px 8px; }
+  .badge { padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .badge.ok { background:#e6f4ec; color:var(--ok); }
+  .badge.bad { background:#fbeae8; color:var(--bad); }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:20px; }
+  .tile, .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .tile .label { font-size:12px; color:var(--muted); }
+  .tile .value { font-size:24px; font-weight:650; margin-top:4px; font-variant-numeric:tabular-nums; }
+  .card { margin-bottom:20px; overflow-x:auto; }
+  .card h2 { font-size:15px; margin:0 0 12px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; font-variant-numeric:tabular-nums; }
+  th, td { padding:7px 8px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  tr.total td { font-weight:700; border-top:2px solid var(--ink); border-bottom:none; }
+  .chart-row { display:grid; grid-template-columns:170px 1fr 120px; gap:10px; align-items:center; margin:8px 0; font-size:13px; }
+  .track { height:14px; background:#f0f2f5; border-radius:4px; position:relative; }
+  .fill { height:100%; border-radius:4px; }
+  .legend { font-size:12px; color:var(--muted); margin-bottom:6px; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 12px; }
+  #msg { color:var(--bad); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Fixed Asset Roll-Forward</h1>
+  <div class="sub">Practice project &middot; all data is fake &middot; straight-line, full-month convention</div>
+
+  <div class="bar">
+    <label>Fiscal year: <select id="year"></select></label>
+    <span id="tie" class="badge"></span>
+    <label style="margin-left:auto;font-size:13px;color:var(--muted)">Load your own CSV:
+      <input type="file" id="file" accept=".csv">
+    </label>
+  </div>
+  <div id="msg"></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="card">
+    <h2>Additions vs. disposals by asset class (at cost)</h2>
+    <div class="legend"><span class="dot" style="background:var(--add)"></span>Additions
+      <span class="dot" style="background:var(--disp)"></span>Disposals</div>
+    <div id="chart"></div>
+  </div>
+
+  <div class="card">
+    <h2>Roll-forward by asset class</h2>
+    <table id="table"></table>
+  </div>
+</main>
+
+<script src="calc.js"></script>
+<script>
+const fmt = n => n.toLocaleString("en-US", { style:"currency", currency:"USD", maximumFractionDigits:0 });
+let assets = [];
+
+function setupYears() {
+  const years = [...new Set(assets.map(a => Math.floor(a.inMi / 12)))].sort();
+  const sel = document.getElementById("year");
+  sel.innerHTML = years.map(y => `<option>${y}</option>`).join("");
+  sel.value = years[years.length - 1];
+  sel.onchange = render;
+}
+
+function render() {
+  const year = Number(document.getElementById("year").value);
+  const { rows, total, tiesOut } = rollForward(assets, year);
+
+  const tie = document.getElementById("tie");
+  tie.textContent = tiesOut ? "✓ Roll-forward ties to asset register" : "✗ Does not tie - investigate";
+  tie.className = "badge " + (tiesOut ? "ok" : "bad");
+
+  document.getElementById("tiles").innerHTML = [
+    ["Ending cost", total.endCost],
+    ["Additions", total.additions],
+    ["Depreciation expense", total.depExp],
+    ["Ending net book value", total.nbv],
+  ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join("");
+
+  const max = Math.max(1, ...rows.flatMap(r => [r.additions, r.disposals]));
+  document.getElementById("chart").innerHTML = rows.map(r => `
+    <div class="chart-row">
+      <div>${r.cls}</div>
+      <div>
+        <div class="track" style="margin-bottom:3px"><div class="fill" style="width:${r.additions / max * 100}%;background:var(--add)"></div></div>
+        <div class="track"><div class="fill" style="width:${r.disposals / max * 100}%;background:var(--disp)"></div></div>
+      </div>
+      <div style="text-align:right">${fmt(r.additions)}<br>${fmt(r.disposals)}</div>
+    </div>`).join("");
+
+  const cols = [
+    ["Beg. cost","begCost"],["Additions","additions"],["Disposals","disposals"],["End cost","endCost"],
+    ["Beg. A/D","begAD"],["Depreciation","depExp"],["Disposals A/D","dispAD"],["End A/D","endAD"],["NBV","nbv"],
+  ];
+  const line = (r, cls="") => `<tr class="${cls}"><td>${r.cls}</td>${cols.map(([,k]) => `<td>${fmt(r[k])}</td>`).join("")}</tr>`;
+  document.getElementById("table").innerHTML =
+    `<tr><th>Asset class</th>${cols.map(([h]) => `<th>${h}</th>`).join("")}</tr>` +
+    rows.map(r => line(r)).join("") + line(total, "total");
+}
+
+function load(text) {
+  try {
+    assets = parseCsv(text);
+    document.getElementById("msg").textContent = "";
+    setupYears();
+    render();
+  } catch (e) {
+    document.getElementById("msg").textContent = "Could not read that CSV: " + e.message;
+  }
+}
+
+// Load the sample data. This works on GitHub Pages or a local server.
+fetch("data/assets.csv")
+  .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
+  .then(load)
+  .catch(() => {
+    document.getElementById("msg").textContent =
+      "Could not auto-load data/assets.csv (this happens when you double-click the file). " +
+      "Use the 'Load your own CSV' button and pick data/assets.csv, or run: python3 -m http.server";
+  });
+
+document.getElementById("file").onchange = e => {
+  const f = e.target.files[0];
+  if (f) f.text().then(load);
+};
+</script>
+</body>
+</html>

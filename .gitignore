@@ -1,0 +1,5 @@
+# Never commit real company data. Keep real exports out of this repo.
+real_data/
+*.xlsx
+*.xls
+.DS_Store
